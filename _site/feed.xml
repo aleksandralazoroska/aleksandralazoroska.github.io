@@ -1,0 +1,310 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Ilche Bedelovski</title>
+    <atom:link href="/feed.xml" rel="self" type="application/rss+xml"/>
+    <link>http://localhost:4000//</link>
+    <description>A personal website with an active blog</description>
+    <pubDate>Thu, 13 Aug 2020 00:15:48 +0200</pubDate>
+    
+      <item>
+        <title>Tekton CI/CD on Kubernetes</title>
+        <link>/2020/04/13/tektoncd-on-kubernetes.html</link>
+        <guid isPermaLink="true">/2020/04/13/tektoncd-on-kubernetes.html</guid>
+        <description>&lt;p&gt;The Tekton Pipelines project provides k8s-style resources for declaring CI/CD-style pipelines, it is an open-source, standalone project that provides an additional layer of abstraction by introducing the pipeline mentality in Kubernetes. Tekton Pipelines are Cloud Native:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;Run on Kubernetes&lt;/li&gt;
+  &lt;li&gt;Have Kubernetes clusters as a first class type&lt;/li&gt;
+  &lt;li&gt;Use containers as their building blocks&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;In this article I am going to present to you how you can set up your first pipeline in Tekton, if you need more specific info about Tekton you can find it &lt;a href=&quot;https://tekton.dev/&quot;&gt;here&lt;/a&gt;.&lt;/p&gt;
+
+&lt;h3 id=&quot;basic-tekton-resources&quot;&gt;Basic Tekton resources&lt;/h3&gt;
+
+&lt;p&gt;The Tekton Pipeline project extends the Kubernetes API by five additional custom resource definitions (CRDs):&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;tasks&lt;/code&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;taskrun&lt;/code&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;pipeline&lt;/code&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;pipelinerun&lt;/code&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;pipelineresource&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;I will go through some of the concepts with short details.&lt;/p&gt;
+
+&lt;p&gt;A &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;step&lt;/code&gt; is an operation in a CI/CD workflow, such as running some unit tests for a Python web app, or the compilation of a Java program. Tekton performs each step with a container image you provide. For example, you may use the official Go image to compile a Go program in the same manner as you would on your local workstation (go build).&lt;/p&gt;
+
+&lt;p&gt;A &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;task&lt;/code&gt; is a collection of steps in order. Tekton runs a task in the form of a Kubernetes pod, where each step becomes a running container in the pod. This design allows you to set up a shared environment for a number of related steps; for example, you may mount a Kubernetes volume in a task, which will be accessible inside each step of the task.&lt;/p&gt;
+
+&lt;p&gt;A &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;pipeline&lt;/code&gt; is a collection of tasks in order. Tekton collects all the tasks, connects them in a directed acyclic graph (DAG), and executes the graph in sequence. In other words, it creates a number of Kubernetes pods and ensures that each pod complete running successfully as desired. Tekton grants developers full control of the process: one may set up a fan-in/fan-out scenario of task completion, ask Tekton to retry automatically should a flaky test exists, or specify a condition that a task must meet before proceeding.&lt;/p&gt;
+
+&lt;h2 id=&quot;requirements&quot;&gt;Requirements&lt;/h2&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;A running Kubernetes cluster is required where Tekton will be installed.&lt;/li&gt;
+  &lt;li&gt;Container Registry where you’ll push your Docker image.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&quot;installing-tekton-on-kubernetes&quot;&gt;Installing Tekton on Kubernetes&lt;/h2&gt;
+
+&lt;p&gt;Installing Tekton on Kubernetes means that I will deploy the required resources on the cluster that will allow me to execute pipelines inside that cluster.&lt;/p&gt;
+
+&lt;p&gt;Using the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;kubectl&lt;/code&gt; client I will create a Kubernetes Secret from my Registry’s credentials (I am using Docker Hub as Container Registry):&lt;/p&gt;
+&lt;div class=&quot;language-plaintext highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;$ kubectl -n tekton-pipelines create secret docker-registry docker-hub --docker-server=$REGISTRY_HOST --docker-username=$REGISTRY_USERNAME --docker-password=$REGISTRY_PASSWORD --docker-email=$REGISTRY_EMAIL
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Creating ServiceAccount for our Tekton Pipelines:&lt;/p&gt;
+&lt;div class=&quot;language-plaintext highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;$ kubectl -n tekton-pipelines create serviceaccount tekton-pipelines
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Creating ClusterRole and ClusterRoleBinding with specific roles for the previously created ServiceAccount:&lt;/p&gt;
+&lt;div class=&quot;language-plaintext highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;$ kubectl create clusterrole tekton-pipelines-role --verb=get,list,watch,create,update,patch,delete --resource=deployments,deployments.apps,services,services,pods,secrets,ingress,pvc
+$ kubectl create clusterrolebinding tekton-pipelines-binding --clusterrole=tekton-pipelines-role --serviceaccount=tekton-pipelines:tekton-pipelines
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;We just satisfied all dependencies before installing Tekton on our Kubernetes cluster, now we can install the latest Tekton release:&lt;/p&gt;
+&lt;div class=&quot;language-plaintext highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;$ kubectl apply -f https://storage.googleapis.com/tekton-releases/pipeline/latest/release.yaml
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;h2 id=&quot;creating-a-sample-pipeline&quot;&gt;Creating a sample Pipeline&lt;/h2&gt;
+
+&lt;p&gt;In this example I will present how you can create simple pipeline for Python Flask application. In my workflow I have:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;PipelineResource&lt;/code&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;Task&lt;/code&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;Pipeline&lt;/code&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;PipelineRun&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h3 id=&quot;pipelineresource&quot;&gt;PipelineResource&lt;/h3&gt;
+
+&lt;p&gt;There are 2 resources:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;git-repo&lt;/code&gt; the repository from where you will clone the application.&lt;/li&gt;
+  &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;image-registry&lt;/code&gt; the Container Registry destination where the Docker Image will be pushed.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;div class=&quot;language-plaintext highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;apiVersion: tekton.dev/v1alpha1
+kind: PipelineResource
+metadata:
+  name: git-repo
+  namespace: tekton-pipelines
+spec:
+  type: git
+  params:
+    - name: revision
+      value: master
+    - name: url
+      value: ''
+---
+apiVersion: tekton.dev/v1alpha1
+kind: PipelineResource
+metadata:
+  name: image-registry
+  namespace: tekton-pipelines
+spec:
+  type: image
+  params:
+    - name: url
+      value: ''
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;h3 id=&quot;task&quot;&gt;Task&lt;/h3&gt;
+
+&lt;p&gt;There is only one task named as &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;build-and-deploy&lt;/code&gt;, in the main section I have &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;inputs&lt;/code&gt;, &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;outputs&lt;/code&gt; and &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;steps&lt;/code&gt;. Inside that task there are few steps:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;build-and-push&lt;/code&gt; - where the image is built and pushed to my Container Registry. I am using &lt;a href=&quot;https://github.com/GoogleContainerTools/kaniko&quot;&gt;Kaniko&lt;/a&gt; for building and pushing the image.&lt;/li&gt;
+  &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;run-helm-add&lt;/code&gt; - my Helm Chart is publicly available, I am adding that repo to my local Helm setting.&lt;/li&gt;
+  &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;run-helm-update&lt;/code&gt; - a step for updating the local config with the recently added repository.&lt;/li&gt;
+  &lt;li&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;run-helm-upgrade&lt;/code&gt; - a step for installing/upgrading the Helm Chart, in this step as you can see, several Helm Values are replaced, it is the application requirement for supplying the required variables to the Helm Chart and pass them to the scheduled Kubernetes Pod.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;div class=&quot;language-plaintext highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;apiVersion: tekton.dev/v1alpha1
+kind: Task
+metadata:
+  name: build-and-deploy
+  namespace: tekton-pipelines
+spec:
+  inputs:
+    resources:
+      - name: git-repo
+        type: git
+    params:
+      - name: pathToDockerFile
+        type: string
+      - name: pathToContext
+        type: string
+      - name: appChartRepo
+        type: string
+      - name: appName
+        type: string
+        .
+        .
+        .
+  outputs:
+    resources:
+      - name: image-registry
+        type: image
+  steps:
+    - name: build-and-push
+      image: gcr.io/kaniko-project/executor:v0.18.0
+      securityContext:
+        runAsUser: 0
+      env:
+        - name: DOCKER_CONFIG
+          value: /data/.docker/
+      command:
+        - /kaniko/executor
+      args:
+        - --dockerfile=$(inputs.params.pathToDockerFile)
+        - --destination=$(inputs.params.imageRepository)
+        - --context=$(inputs.params.pathToContext)
+        - --skip-tls-verify
+        - --verbosity=debug
+      volumeMounts:
+        - name: kaniko-secret
+          mountPath: /data
+    - name: run-helm-add
+      image: alpine/helm:3.1.1
+      command: [&quot;helm&quot;]
+      args:
+        - repo
+        - add
+        - $(inputs.params.appName)
+        - $(inputs.params.appChartRepo)
+    - name: run-helm-update
+      image: alpine/helm:3.1.1
+      command: [&quot;helm&quot;]
+      args:
+        - repo
+        - update
+    - name: run-helm-upgrade
+      image: alpine/helm:3.1.0
+      command: [&quot;helm&quot;]
+      args:
+        - upgrade
+        - --install
+        - --namespace=$(inputs.params.appName)
+        - $(inputs.params.appName)
+        - api/api
+        - --set
+        - namespace=$(inputs.params.appName)
+        - --set
+        - name=$(inputs.params.appName)
+        - --set
+        - image.repository=$(inputs.params.imageRepository)
+        .
+        .
+        .
+  volumes:
+    - name: kaniko-secret
+      secret:
+        secretName: docker-hub
+        items:
+          - key: .dockerconfigjson
+            path: .docker/config.json
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;h3 id=&quot;pipeline&quot;&gt;Pipeline&lt;/h3&gt;
+
+&lt;p&gt;As I mentioned earlier, a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;pipeline&lt;/code&gt; is a collection of tasks in order, in my &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;pipeline&lt;/code&gt; I have &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;resources&lt;/code&gt;, &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;params&lt;/code&gt; and &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;tasks&lt;/code&gt;. The vital in this &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;pipeline&lt;/code&gt; is the moment of calling my previous task named as &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;build-and-deploy&lt;/code&gt; with the already defined resources.&lt;/p&gt;
+
+&lt;div class=&quot;language-plaintext highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;kind: Pipeline
+metadata:
+  name: api-pipeline
+  namespace: tekton-pipelines
+spec:
+  resources:
+    - name: git-repo
+      type: git
+    - name: image-registry
+      type: image
+  params:
+    - name: pathToDockerFile
+      type: string
+    - name: pathToContext
+      type: string
+    - name: appChartRepo
+      type: string
+    - name: appName
+      type: string
+      .
+      .
+      .
+  tasks:
+    - name: build-and-deploy
+      taskRef:
+        name: build-and-deploy
+      params:
+        - name: pathToDockerFile
+          value: &quot;$(params.pathToDockerFile)&quot;
+        - name: pathToContext
+          value: &quot;$(params.pathToContext)&quot;
+        - name: appChartRepo
+          value: &quot;$(params.appChartRepo)&quot;
+        - name: appName
+          value: &quot;$(params.appName)&quot;
+          .
+          .
+          .
+      resources:
+        inputs:
+          - name: git-repo
+            resource: git-repo
+        outputs:
+          - name: image-registry
+            resource: image-registry
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;h3 id=&quot;pipelinerun&quot;&gt;PipelineRun&lt;/h3&gt;
+
+&lt;p&gt;This deployment is crucial for running the previous pipeline, I am referencing the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;pipeline&lt;/code&gt; name where I am sending the resources and the values of the required parameters.&lt;/p&gt;
+
+&lt;div class=&quot;language-plaintext highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;apiVersion: tekton.dev/v1alpha1
+kind: PipelineRun
+metadata:
+  name: api-pipeline-run
+  namespace: tekton-pipelines
+spec:
+  serviceAccountName: tekton-pipelines
+  pipelineRef:
+    name: api-pipeline
+  resources:
+    - name: git-repo
+      resourceRef:
+        name: git-repo
+    - name: image-registry
+      resourceRef:
+        name: image-registry
+  params:
+    - name: &quot;appName&quot;
+      value: &quot;&quot;
+    - name: imageRepository
+      .
+      .
+      .
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;h2 id=&quot;conclusion&quot;&gt;Conclusion&lt;/h2&gt;
+
+&lt;p&gt;Tekton is a perfect CD solution, it provides open-source components for standardizing your CI/CD tooling and processes across different vendors, programming languages, and deployment environments. Industry specifications around pipelines, releases, workflows, and other CI/CD components available with Tekton will work well with existing CI/CD tools such as Jenkins, Jenkins X, Skaffold, and Knative, among others. Tekton provides a number of interactive tutorials at &lt;a href=&quot;https://try.tekton.dev&quot;&gt;try&lt;/a&gt; for developers to get hands-on experience with the project.&lt;/p&gt;
+
+&lt;h2 id=&quot;references&quot;&gt;References&lt;/h2&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;Tekton git repository, https://github.com/tektoncd/pipeline&lt;/li&gt;
+  &lt;li&gt;Official Tekton documentation, http://tekton.dev/docs&lt;/li&gt;
+&lt;/ul&gt;
+
+</description>
+        <pubDate>Mon, 13 Apr 2020 00:00:00 +0200</pubDate>
+      </item>
+    
+  </channel>
+</rss>

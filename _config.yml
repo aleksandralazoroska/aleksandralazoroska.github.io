@@ -1,12 +1,12 @@
 # SITE CONFIGURATION
 baseurl: "/"
-url: "https://ilchebedelovski.github.io/"
+url: "https://aleksandralazoroska.github.io/"
 
 # THEME-SPECIFIC CONFIGURATION
 theme_settings:
   # Meta
   title: Aleksandra Lazoroska
-  avatar: assets/img/avatar.png
+  #avatar: assets/img/avatar.png
   favicon: assets/favicon.ico
   gravatar: # Email MD5 hash
   description: "A personal website with an active blog"
@@ -20,14 +20,14 @@ theme_settings:
 
   # Icons
   rss: false
-  email_address: "ilche.bedelovski@gmail.com"
+  email_address: "aleksandra.lazoroska@gmail.com"
   behance:
   bitbucket:
   dribbble:
   facebook:
   flickr:
   gitlab:
-  github: "ilchebedelovski"
+  github: ""
   gitter:
   google_plus:
   instagram:
@@ -38,7 +38,7 @@ theme_settings:
   stack_exchange:  # Full URL
   steam:
   tumblr:
-  twitter: "@ibedelovski"
+  twitter: ""
   wordpress:
   youtube:
 

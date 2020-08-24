@@ -1,5 +1,5 @@
 ---
-layout: story
+layout: post
 title: Readiness and Liveness probes
 ---
 

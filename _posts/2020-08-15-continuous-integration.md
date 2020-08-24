@@ -1,5 +1,5 @@
 ---
-layout: story
+layout: post
 title: CI/CD
 ---
 
